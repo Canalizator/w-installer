@@ -9,7 +9,7 @@ Automates the installation and configuration of W\.AI GPU workers on NVIDIA-powe
 ## 📋 Requirements
 
 * **OS:** Ubuntu or any Debian-based distribution
-* **GPU:** One or more **NVIDIA** GPUs with drivers installed
+* **GPU:** One or more **NVIDIA** GPUs
 * **Access:** `root` or a user with `sudo` privileges
 
 ---
