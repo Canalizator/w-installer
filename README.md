@@ -1,6 +1,4 @@
-Вот английская версия `README.md`, оформленная для публикации на GitHub:
 
----
 
 # W\.AI GPU Installer Script
 
