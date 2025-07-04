@@ -99,12 +99,4 @@ Fully removes everything installed by the script.
 
 Exits the script cleanly.
 
----
 
-## 📎 License
-
-MIT (or specify another license if needed)
-
----
-
-Let me know if you also need a logo, usage GIF, or badges (e.g. shell-check, last commit, license).
