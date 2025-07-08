@@ -5,6 +5,7 @@ set -eo pipefail
 # --- Globals and Colors ---
 GREEN_BOLD="\e[1;32m"
 BLUE="\e[0;34m"
+YELLOW_BOLD="\e[1;33m"
 REVERSE="\e[7m"
 RESET="\e[0m"
 
@@ -12,7 +13,7 @@ RESET="\e[0m"
 
 # Renders the interactive menu
 show_menu() {
-    local -a menu_items=("Install Worker" "Stats" "Stop Worker" "Uninstall Worker" "Exit")
+    local -a menu_items=("Install Worker" "Stats" "Stop Worker" "Start Worker" "Uninstall Worker" "Exit")
     local selected_index=0
     tput civis; trap "tput cnorm; exit" SIGINT
     while true; do
@@ -69,8 +70,7 @@ cat <<'EOF'
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- discord: dedbezmen     
-                                                                                             
+ discord: dedbezmen                                                                                                  
 EOF
         echo -e "${RESET}"; echo "Use ▲/▼ to navigate, Enter to select"; echo "------------------------------------"
         for i in "${!menu_items[@]}"; do
@@ -80,15 +80,13 @@ EOF
         case "$key" in
             '[A') selected_index=$(( (selected_index - 1 + ${#menu_items[@]}) % ${#menu_items[@]} ));;
             '[B') selected_index=$(( (selected_index + 1) % ${#menu_items[@]} ));;
-            '') tput cnorm; case $selected_index in 0) main_install;; 1) show_stats;; 2) stop_worker;; 3) uninstall_worker;; 4) echo "Exiting."; exit 0;; esac; read -rp "Press Enter to return to the menu...";;
+            '') tput cnorm; case $selected_index in 0) main_install;; 1) show_stats;; 2) stop_worker;; 3) start_worker;; 4) uninstall_worker;; 5) echo "Exiting."; exit 0;; esac; read -rp "Press Enter to return to the menu...";;
         esac
     done
 }
 
 show_stats() {
-    tput civis # Hide cursor
-    trap "tput cnorm" EXIT # Restore cursor on exit
-    
+    tput civis; trap "tput cnorm" EXIT
     while true; do
         clear
         echo -e "${GREEN_BOLD}Worker Statistics (Live)${RESET}"
@@ -101,35 +99,22 @@ show_stats() {
 
         if [ ${#app_names[@]} -eq 0 ]; then echo -e "\nNo running 'wai-gpu-*' workers found."; fi
 
-        printf "%-20s ${BLUE}|${RESET} %-15s ${BLUE}|${RESET} %s\n" "Instance" "Current Coins" "Coins/Hour"
-        echo -e "${BLUE}---------------------|-----------------|-------------${RESET}"
+        printf "%-27s ${BLUE}|${RESET} %-15s\n" "Instance" "Current Coins"
+        echo -e "${BLUE}----------------------------|-----------------${RESET}"
 
         for app_name in "${app_names[@]}"; do
             local latest_log_line=$(pm2 logs "$app_name" --lines 100 --nostream 2>/dev/null | grep "You now have" | tail -1)
             local coin_count=0
             if [ -n "$latest_log_line" ]; then coin_count=$(echo "$latest_log_line" | awk '{print $(NF-2)}'); fi
-
-            local uptime_ms=$(echo "$pm2_data" | jq ".[] | select(.name == \"$app_name\") | .pm2_env.uptime")
-            local coins_per_hour="0.00"
-
-            if [ "$uptime_ms" -gt 0 ] && [ "$coin_count" -gt 0 ]; then
-                local uptime_hours=$(bc -l <<< "$uptime_ms / 1000 / 3600")
-                if (( $(echo "$uptime_hours > 0" |bc -l) )); then
-                     coins_per_hour=$(bc -l <<< "scale=2; $coin_count / $uptime_hours")
-                fi
-            fi
-            printf "%-20s ${BLUE}|${RESET} ${GREEN_BOLD}%-15s${RESET} ${BLUE}|${RESET} ${GREEN_BOLD}%s${RESET}\n" "$app_name" "$coin_count" "$coins_per_hour"
+            
+            printf "%-27s ${BLUE}|${RESET} ${GREEN_BOLD}%-15s${RESET}\n" "$app_name" "$coin_count"
         done
         
         echo -e "\n${BLUE}Updating in 10s... (Press any key to exit)${RESET}"
         
-        for ((i=0; i<100; i++)); do
-            read -t 0.1 -n 1 && break 2 
-        done
+        read -t 10 -n 1 && break
     done
-    
-    tput cnorm 
-    trap - EXIT
+    tput cnorm; trap - EXIT
 }
 
 main_install() {
@@ -206,20 +191,39 @@ EOF
   create_pm2_config "$api_key";
   
   echo -e "${GREEN_BOLD}Starting PM2 processes sequentially...${RESET}"; for app_name in "${APP_NAMES_TO_START[@]}"; do
-    echo "Starting instance: ${app_name}..."; pm2 start wai.config.js --only "${app_name}"; echo "Waiting 15 seconds..."; sleep 15; 
+    echo "Starting instance: ${app_name}..."; pm2 start wai.config.js --only "${app_name}"; echo "Waiting 30 seconds..."; sleep 30; 
   done
   
   echo -e "${GREEN_BOLD}Configuring PM2 to start on system boot...${RESET}";
   pm2 startup | tail -n 1 | sudo bash; pm2 save
-  echo -e "${GREEN_BOLD}Installation is complete! Run 'source ~/.bashrc' or re-login for 'pm2' command.${RESET}"
+  
+  echo -e "\n${GREEN_BOLD}Installation is complete!${RESET}"
+  echo -e "${YELLOW_BOLD}---------------------------------------------------------------"
+  echo -e "IMPORTANT: To use 'pm2' and other commands you must:"
+  echo -e "1. Run the command: ${GREEN_BOLD}source ~/.bashrc${YELLOW_BOLD}"
+  echo -e "OR"
+  echo -e "2. Log out and log back in to your session."
+  echo -e "---------------------------------------------------------------${RESET}"
 }
 
-stop_worker() { clear; echo -e "${GREEN_BOLD}Stopping all 'wai' worker processes...${RESET}"; if command -v pm2 &> /dev/null; then pm2 stop all; echo "All processes stopped."; else echo "PM2 not in PATH."; fi; }
+stop_worker() { 
+    clear; echo -e "${GREEN_BOLD}Stopping all 'wai' worker processes...${RESET}"; 
+    export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+    if command -v pm2 &> /dev/null; then pm2 stop all; echo "All processes stopped."; else echo "PM2 not found in PATH."; fi
+}
+
+start_worker() {
+    clear; echo -e "${GREEN_BOLD}Restarting all 'wai' worker processes...${RESET}";
+    export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+    if command -v pm2 &> /dev/null; then pm2 restart all; echo "All processes restarted."; else echo "PM2 not found in PATH."; fi
+}
 
 uninstall_worker() {
     clear; read -p "Are you sure you want to completely uninstall the worker? (y/n) " -n 1 -r; echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN_BOLD}Starting uninstallation...${RESET}"; if command -v pm2 &> /dev/null; then
+        echo -e "${GREEN_BOLD}Starting uninstallation...${RESET}";
+        export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+        if command -v pm2 &> /dev/null; then
             pm2 delete all >/dev/null 2>&1 || true; pm2 unstartup >/dev/null 2>&1 || true
             pm2 kill >/dev/null 2>&1 || true; npm uninstall -g pm2 yarn >/dev/null 2>&1 || true
         fi
