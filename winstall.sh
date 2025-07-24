@@ -9,11 +9,16 @@ YELLOW_BOLD="\e[1;33m"
 REVERSE="\e[7m"
 RESET="\e[0m"
 
+# --- Globals for Periodic Restart ---
+PID_FILE="/tmp/wai_restarter.pid"
+LOG_FILE="/tmp/wai_restarter.log"
+
 # --- Function Definitions ---
 
 # Renders the interactive menu
 show_menu() {
-    local -a menu_items=("Install Worker" "Stats" "Stop Worker" "Start Worker" "Uninstall Worker" "Exit")
+    # Обновленный список пунктов меню
+    local -a menu_items=("Install Worker" "Stats" "Manage Periodic Restart" "Stop Worker" "Start Worker" "Uninstall Worker" "Exit")
     local selected_index=0
     tput civis; trap "tput cnorm; exit" SIGINT
     while true; do
@@ -50,8 +55,8 @@ cat <<'EOF'
  @@@@@@@@@@@@@@  @@@@@@   @@@@    @@       @  @@@@@@ @@@   @@@@ @@@@ @@  @@@@@@@     @@@ @@@@@@@@@ 
  @@@@@@@@@@@@@@   @@@@           @@@  @@@@@ @@@@@@@  @@@   @@@@ @@@@@@@  @@@ @@@   @@@@@ @@@@@@@@@ 
  @@@@@@@@@@@@@@@         @@@   @  @ @@@@@@@ @  @@    @@@@@@@@@@ @@@      @@@ @@@@@  @ @ @@@@@@@@@@ 
+ @@@@@@           @@@@@   @@@  @@@  @@@@@@@ @ @@@@ @ @@@   @@@@ @@@  @@  @@@  @@     @  @@@@@@@@@@ 
  @@@@@@@@@@@@          @@@ @@@@@@@  @@@       @@@@ @ @@@@@ @@@@ @@@  @@  @@@  @@     @  @@@@@@@@@@ 
- @@@@@@           @@@@@   @@@  @@@  @@@@@@@ @ @@@@ @ @@@   @@@@ @@@@@@@              @@  @@@@@@@@@ 
  @@@@     @@@@@ @@@@@@@@  @@@       @@@@@@@   @@@@ @ @@@   @@@@ @@            @@@@@@@@@@ @@@@@@@@@ 
  @@@@  @@@@@@@  @@   @@@  @@@ @@@@@ @@@     @ @@@@ @ @@@               @@@@@@@@@@        @@@@@@@@@ 
  @@@@  @ @@@   @@@   @@@  @@@ @ @@@ @@@@@@@   @@@@         @@  @ @@@@@@@@@@@           @@@@@@@@@@@ 
@@ -66,23 +71,112 @@ cat <<'EOF'
  @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- discord: dedbezmen                                                                                                  
 EOF
         echo -e "${RESET}"; echo "Use ▲/▼ to navigate, Enter to select"; echo "------------------------------------"
         for i in "${!menu_items[@]}"; do
             if [ "$i" -eq "$selected_index" ]; then echo -e "${GREEN_BOLD}${REVERSE}➤ ${menu_items[$i]}${RESET}"; else echo "  ${menu_items[$i]}"; fi
         done; echo "------------------------------------"
+        
+        # Обновленный кейс для меню
+        local status_text=""
+        if [ "$selected_index" -eq 2 ]; then # Special text for our new menu item
+            if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+                status_text="(${YELLOW_BOLD}ACTIVE${RESET})"
+            else
+                status_text="(${BLUE}INACTIVE${RESET})"
+            fi
+            echo -e "Status: $status_text"
+        fi
+
         read -rsn1 key; if [[ $key == $'\e' ]]; then read -rsn2 -t 0.1 key; fi
         case "$key" in
             '[A') selected_index=$(( (selected_index - 1 + ${#menu_items[@]}) % ${#menu_items[@]} ));;
             '[B') selected_index=$(( (selected_index + 1) % ${#menu_items[@]} ));;
-            '') tput cnorm; case $selected_index in 0) main_install;; 1) show_stats;; 2) stop_worker;; 3) start_worker;; 4) uninstall_worker;; 5) echo "Exiting."; exit 0;; esac; read -rp "Press Enter to return to the menu...";;
+            '') tput cnorm; case $selected_index in 0) main_install;; 1) show_stats;; 2) manage_periodic_restart;; 3) stop_worker;; 4) start_worker;; 5) uninstall_worker;; 6) echo "Exiting."; exit 0;; esac; read -rp "Press Enter to return to the menu...";;
         esac
     done
+}
+
+# --- НОВАЯ ФУНКЦИЯ: Основная логика периодического перезапуска ---
+periodic_restart() {
+    # Эта функция запускается в фоне и работает вечно
+    while true; do
+        echo "---" >> "$LOG_FILE"
+        echo "Periodic Restart: Starting a cycle at $(date)" >> "$LOG_FILE"
+        
+        # Загружаем окружение NVM, т.к. это отдельный процесс
+        export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+        
+        if ! command -v pm2 &> /dev/null; then
+            echo "Periodic Restart: PM2 not found. Sleeping for 30 minutes." >> "$LOG_FILE"
+            sleep 1800 # 30 минут
+            continue
+        fi
+
+        # Получаем список инстансов
+        local pm2_data
+        pm2_data=$(pm2 jlist 2>/dev/null || echo "[]")
+        local app_names=()
+        readarray -t app_names < <(echo "$pm2_data" | jq -r '.[] | select(.name | startswith("wai-gpu-")) | .name')
+
+        if [ ${#app_names[@]} -gt 0 ]; then
+            echo "Periodic Restart: Found ${#app_names[@]} instances. Restarting sequentially." >> "$LOG_FILE"
+            for app_name in "${app_names[@]}"; do
+                echo "Periodic Restart: Restarting '$app_name'..." >> "$LOG_FILE"
+                pm2 restart "$app_name" --no-color >> "$LOG_FILE" 2>&1
+                echo "Periodic Restart: Waiting 30 seconds..." >> "$LOG_FILE"
+                sleep 30
+            done
+            echo "Periodic Restart: Cycle complete." >> "$LOG_FILE"
+        else
+            echo "Periodic Restart: No 'wai-gpu-*' workers found to restart." >> "$LOG_FILE"
+        fi
+        
+        echo "Periodic Restart: Sleeping for 30 minutes until the next cycle." >> "$LOG_FILE"
+        sleep 1800 # 30 минут
+    done
+}
+
+# --- НОВАЯ ФУНКЦИЯ: Управление периодическим перезапуском из меню ---
+manage_periodic_restart() {
+    clear
+    # Проверяем, существует ли PID-файл и активен ли процесс
+    if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        echo -e "${YELLOW_BOLD}Periodic restart is currently ACTIVE (PID: $pid).${RESET}"
+        echo "Процессы перезапускаются каждые 30 минут с задержкой 30с между ними."
+        echo "Логи можно посмотреть командой: tail -f $LOG_FILE"
+        echo ""
+        read -p "Хотите ОСТАНОВИТЬ периодический перезапуск? (y/n) " -n 1 -r; echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Stopping the background process..."
+            kill "$pid"
+            rm -f "$PID_FILE"
+            echo -e "${GREEN_BOLD}Periodic restart has been disabled.${RESET}"
+        else
+            echo "No action taken."
+        fi
+    else
+        # Если процесс не запущен (или PID-файл устарел)
+        rm -f "$PID_FILE" # На всякий случай удаляем старый файл
+        echo -e "${YELLOW_BOLD}Periodic restart is currently INACTIVE.${RESET}"
+        read -p "Хотите ЗАПУСТИТЬ его? (y/n) " -n 1 -r; echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Starting the periodic restart process in the background..."
+            # Запускаем функцию в фоне, перенаправляем ее вывод в лог-файл
+            # и сохраняем ее PID. 'nohup' гарантирует, что процесс не умрет при закрытии терминала.
+            # 'bash -c' нужен, чтобы запустить функцию в новой оболочке, 
+            # а 'declare -f' передает определение функции в эту оболочку.
+            nohup bash -c "$(declare -f periodic_restart); periodic_restart" >> "$LOG_FILE" 2>&1 &
+            echo $! > "$PID_FILE"
+            
+            echo -e "${GREEN_BOLD}Periodic restart is now ACTIVE.${RESET}"
+            echo "Для мониторинга используйте команду: tail -f $LOG_FILE"
+        else
+            echo "No action taken."
+        fi
+    fi
 }
 
 show_stats() {
@@ -222,6 +316,14 @@ uninstall_worker() {
     clear; read -p "Are you sure you want to completely uninstall the worker? (y/n) " -n 1 -r; echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo -e "${GREEN_BOLD}Starting uninstallation...${RESET}";
+        # --- Также останавливаем периодический перезапуск при удалении ---
+        if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+            echo "Stopping periodic restarter..."
+            kill "$(cat "$PID_FILE")"
+            rm -f "$PID_FILE"
+        fi
+        rm -f "$LOG_FILE"
+        # ---
         export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
         if command -v pm2 &> /dev/null; then
             pm2 delete all >/dev/null 2>&1 || true; pm2 unstartup >/dev/null 2>&1 || true
