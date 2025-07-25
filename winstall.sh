@@ -17,7 +17,6 @@ LOG_FILE="/tmp/wai_restarter.log"
 
 # Renders the interactive menu
 show_menu() {
-    # Обновленный список пунктов меню
     local -a menu_items=("Install Worker" "Stats" "Manage Periodic Restart" "Stop Worker" "Start Worker" "Uninstall Worker" "Exit")
     local selected_index=0
     tput civis; trap "tput cnorm; exit" SIGINT
@@ -27,7 +26,7 @@ cat <<'EOF'
                                                                                                    
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@     @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
+ @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@     @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@            @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   @@    @@@@@@@    @@@@@@@@@@@@@@@@@@@@@@     @@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@          @@@@@@@@@@ @   @@@@@@@@@@@@@@@@@@@  @@   @@@@@@@@@@@@@@@@@@ 
@@ -76,10 +75,9 @@ EOF
         for i in "${!menu_items[@]}"; do
             if [ "$i" -eq "$selected_index" ]; then echo -e "${GREEN_BOLD}${REVERSE}➤ ${menu_items[$i]}${RESET}"; else echo "  ${menu_items[$i]}"; fi
         done; echo "------------------------------------"
-        
-        # Обновленный кейс для меню
+
         local status_text=""
-        if [ "$selected_index" -eq 2 ]; then # Special text for our new menu item
+        if [ "$selected_index" -eq 2 ]; then # Special text for "Manage Periodic Restart"
             if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
                 status_text="(${YELLOW_BOLD}ACTIVE${RESET})"
             else
@@ -97,58 +95,69 @@ EOF
     done
 }
 
-# --- НОВАЯ ФУНКЦИЯ: Основная логика периодического перезапуска ---
+# --- Core logic for the periodic restart ---
 periodic_restart() {
-    # Эта функция запускается в фоне и работает вечно
+    # Log the fact that the background process has started successfully.
+    echo "Periodic Restart: Background process started successfully at $(date). PID: $$. Monitoring log: $LOG_FILE"
+    
+    # This function runs in the background indefinitely.
     while true; do
-        echo "---" >> "$LOG_FILE"
-        echo "Periodic Restart: Starting a cycle at $(date)" >> "$LOG_FILE"
+        echo "---"
+        echo "Periodic Restart: Starting a cycle at $(date)"
         
-        # Загружаем окружение NVM, т.к. это отдельный процесс
-        export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+        # Load NVM environment, as this is a separate process. NVM_DIR is passed from the parent process.
+        # This guarantees that we can find nvm, node, and pm2.
+        if [ -s "$NVM_DIR/nvm.sh" ]; then
+             # shellcheck source=/dev/null
+             \. "$NVM_DIR/nvm.sh" &>/dev/null
+        else
+            echo "Periodic Restart: NVM script not found at $NVM_DIR. Sleeping for 30 minutes."
+            sleep 1800
+            continue
+        fi
         
-        if ! command -v pm2 &> /dev/null; then
-            echo "Periodic Restart: PM2 not found. Sleeping for 30 minutes." >> "$LOG_FILE"
-            sleep 1800 # 30 минут
+        if ! command -v pm2 &> /dev/null || ! command -v jq &> /dev/null; then
+            echo "Periodic Restart: 'pm2' or 'jq' not found in PATH. Make sure NVM is sourced. PATH is: $PATH. Sleeping for 30 minutes."
+            sleep 1800 # 30 minutes
             continue
         fi
 
-        # Получаем список инстансов
+        # Get the list of instances
         local pm2_data
         pm2_data=$(pm2 jlist 2>/dev/null || echo "[]")
         local app_names=()
         readarray -t app_names < <(echo "$pm2_data" | jq -r '.[] | select(.name | startswith("wai-gpu-")) | .name')
 
         if [ ${#app_names[@]} -gt 0 ]; then
-            echo "Periodic Restart: Found ${#app_names[@]} instances. Restarting sequentially." >> "$LOG_FILE"
+            echo "Periodic Restart: Found ${#app_names[@]} instances. Restarting sequentially."
             for app_name in "${app_names[@]}"; do
-                echo "Periodic Restart: Restarting '$app_name'..." >> "$LOG_FILE"
-                pm2 restart "$app_name" --no-color >> "$LOG_FILE" 2>&1
-                echo "Periodic Restart: Waiting 30 seconds..." >> "$LOG_FILE"
+                echo "Periodic Restart: Restarting '$app_name'..."
+                pm2 restart "$app_name" --no-color
+                echo "Periodic Restart: Waiting 30 seconds..."
                 sleep 30
             done
-            echo "Periodic Restart: Cycle complete." >> "$LOG_FILE"
+            echo "Periodic Restart: Cycle complete."
         else
-            echo "Periodic Restart: No 'wai-gpu-*' workers found to restart." >> "$LOG_FILE"
+            echo "Periodic Restart: No 'wai-gpu-*' workers found to restart."
         fi
         
-        echo "Periodic Restart: Sleeping for 30 minutes until the next cycle." >> "$LOG_FILE"
-        sleep 1800 # 30 минут
+        echo "Periodic Restart: Sleeping for 30 minutes until the next cycle."
+        sleep 1800 # 30 minutes
     done
 }
 
-# --- НОВАЯ ФУНКЦИЯ: Управление периодическим перезапуском из меню ---
+# --- Menu option to manage the periodic restart ---
 manage_periodic_restart() {
     clear
-    # Проверяем, существует ли PID-файл и активен ли процесс
+    # Check if a PID file exists and the process is active
     if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
         local pid
         pid=$(cat "$PID_FILE")
         echo -e "${YELLOW_BOLD}Periodic restart is currently ACTIVE (PID: $pid).${RESET}"
-        echo "Процессы перезапускаются каждые 30 минут с задержкой 30с между ними."
-        echo "Логи можно посмотреть командой: tail -f $LOG_FILE"
+        echo "Processes are restarted every 30 minutes with a 30s delay between them."
+        echo "Logs can be viewed with the command: tail -f $LOG_FILE"
         echo ""
-        read -p "Хотите ОСТАНОВИТЬ периодический перезапуск? (y/n) " -n 1 -r; echo
+        read -p "Do you want to STOP the periodic restart? (y/n) " -n 1 -r; echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             echo "Stopping the background process..."
             kill "$pid"
@@ -158,21 +167,36 @@ manage_periodic_restart() {
             echo "No action taken."
         fi
     else
-        # Если процесс не запущен (или PID-файл устарел)
-        rm -f "$PID_FILE" # На всякий случай удаляем старый файл
+        # If the process is not running (or the PID file is stale)
+        rm -f "$PID_FILE" # Clean up old file just in case
         echo -e "${YELLOW_BOLD}Periodic restart is currently INACTIVE.${RESET}"
-        read -p "Хотите ЗАПУСТИТЬ его? (y/n) " -n 1 -r; echo
+        read -p "Do you want to START it? (y/n) " -n 1 -r; echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             echo "Starting the periodic restart process in the background..."
-            # Запускаем функцию в фоне, перенаправляем ее вывод в лог-файл
-            # и сохраняем ее PID. 'nohup' гарантирует, что процесс не умрет при закрытии терминала.
-            # 'bash -c' нужен, чтобы запустить функцию в новой оболочке, 
-            # а 'declare -f' передает определение функции в эту оболочку.
-            nohup bash -c "$(declare -f periodic_restart); periodic_restart" >> "$LOG_FILE" 2>&1 &
+            
+            # Load NVM environment in the current shell to get the correct PATH
+            export NVM_DIR="$HOME/.nvm"
+            # shellcheck source=/dev/null
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # Check for commands before launching
+            if ! command -v jq &> /dev/null || ! command -v pm2 &> /dev/null; then
+                echo "Error: 'jq' or 'pm2' is not in the PATH. Cannot start periodic restarter."
+                echo "Try running 'source ~/.bashrc' and then run this script again."
+                return 1
+            fi
+            
+            # FIXED: Create the log file immediately so `tail -f` works without error.
+            touch "$LOG_FILE"
+            
+            # FIXED: Launch the function in the background via 'nohup', explicitly passing the PATH and NVM_DIR environment variables.
+            # 'declare -f' passes the function definition to the new shell.
+            # The output is now correctly redirected to the log file.
+            nohup env PATH="$PATH" NVM_DIR="$NVM_DIR" bash -c "$(declare -f periodic_restart); periodic_restart" >> "$LOG_FILE" 2>&1 &
             echo $! > "$PID_FILE"
             
-            echo -e "${GREEN_BOLD}Periodic restart is now ACTIVE.${RESET}"
-            echo "Для мониторинга используйте команду: tail -f $LOG_FILE"
+            echo -e "${GREEN_BOLD}Periodic restart is now ACTIVE (PID: $(cat "$PID_FILE")).${RESET}"
+            echo "To monitor, use the command: tail -f $LOG_FILE"
         else
             echo "No action taken."
         fi
@@ -186,10 +210,10 @@ show_stats() {
         echo -e "${GREEN_BOLD}Worker Statistics (Live)${RESET}"
         
         export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
-        if ! command -v pm2 &> /dev/null; then echo "PM2 not found."; sleep 5; continue; fi
+        if ! command -v pm2 &> /dev/null; then echo "PM2 not found. Have you run 'source ~/.bashrc'?"; sleep 5; continue; fi
         
-        local pm2_data=$(pm2 jlist 2>/dev/null || echo "[]")
-        local app_names=($(echo "$pm2_data" | jq -r '.[] | select((.name | startswith("wai-gpu-")) and .pm2_env.status == "online") | .name'))
+        local pm2_data; pm2_data=$(pm2 jlist 2>/dev/null || echo "[]")
+        local app_names; app_names=($(echo "$pm2_data" | jq -r '.[] | select((.name | startswith("wai-gpu-")) and .pm2_env.status == "online") | .name'))
 
         if [ ${#app_names[@]} -eq 0 ]; then echo -e "\nNo running 'wai-gpu-*' workers found."; fi
 
@@ -197,7 +221,7 @@ show_stats() {
         echo -e "${BLUE}----------------------------|-----------------${RESET}"
 
         for app_name in "${app_names[@]}"; do
-            local latest_log_line=$(pm2 logs "$app_name" --lines 100 --nostream 2>/dev/null | grep "You now have" | tail -1)
+            local latest_log_line; latest_log_line=$(pm2 logs "$app_name" --lines 100 --nostream 2>/dev/null | grep "You now have" | tail -1)
             local coin_count=0
             if [ -n "$latest_log_line" ]; then coin_count=$(echo "$latest_log_line" | awk '{print $(NF-2)}'); fi
             
@@ -213,12 +237,14 @@ show_stats() {
 
 main_install() {
   clear
-  read -rp "$(echo -e ${GREEN_BOLD}Enter the API key from app.w.ai/keys:${RESET} )" W_AI_API_KEY
+  read -rp "$(echo -e "${GREEN_BOLD}Enter the API key from app.w.ai/keys:${RESET} ")" W_AI_API_KEY
   if [ -z "$W_AI_API_KEY" ]; then echo "Error: API key cannot be empty."; return; fi
   local api_key="$W_AI_API_KEY"; declare -a APP_NAMES_TO_START
 
   echo -e "${GREEN_BOLD}Starting installation...${RESET}"
   echo -e "${GREEN_BOLD}Updating packages and installing dependencies...${RESET}"; apt-get update && apt-get install -y build-essential nano screen curl git wget lz4 jq make gcc automake autoconf tmux htop nvme-cli pkg-config libssl-dev tar clang bsdmainutils ncdu unzip python3-pip python3-venv bc
+  echo -e "${GREEN_BOLD}Installing libxml2 dependency...${RESET}"; apt-get install -y libxml2
+
   echo -e "${GREEN_BOLD}Checking for CUDA...${RESET}"; if command -v nvcc &> /dev/null; then echo "CUDA is already installed."; else
     echo "Downloading and installing CUDA 12.4..."; wget -q https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_550.54.14_linux.run -O cuda.run
     sh cuda.run --silent --toolkit --override; export PATH=/usr/local/cuda/bin${PATH:+:${PATH}}; echo 'export PATH=/usr/local/cuda/bin${PATH:+:${PATH}}' >> ~/.bashrc; rm cuda.run; echo "CUDA installed.";
@@ -259,7 +285,7 @@ main_install() {
     local instance_counts=() total_apps=0
     echo "Calculating instance counts for ${#vrams_mb[@]} GPUs..."
     for vram in "${vrams_mb[@]}"; do
-        local instances=$(bc <<< "scale=2; vram=${vram}; vram/1024/1.8" | cut -d. -f1)
+        local instances; instances=$(bc <<< "scale=2; vram=${vram}; vram/1024/1.8" | cut -d. -f1)
         if [ "$instances" -lt 1 ]; then instances=1; fi
         instance_counts+=($instances)
         total_apps=$((total_apps + instances))
@@ -289,41 +315,44 @@ EOF
   done
   
   echo -e "${GREEN_BOLD}Configuring PM2 to start on system boot...${RESET}";
+  # The output of pm2 startup needs to be executed
   pm2 startup | tail -n 1 | sudo bash; pm2 save
   
   echo -e "\n${GREEN_BOLD}Installation is complete!${RESET}"
   echo -e "${YELLOW_BOLD}---------------------------------------------------------------"
-  echo -e "IMPORTANT: To use 'pm2' and other commands you must:"
+  echo -e "IMPORTANT: To use 'pm2' and other commands in your terminal,"
+  echo -e "you must now either:"
   echo -e "1. Run the command: ${GREEN_BOLD}source ~/.bashrc${YELLOW_BOLD}"
   echo -e "OR"
   echo -e "2. Log out and log back in to your session."
+  echo -e "This is a one-time action for your current terminal session."
   echo -e "---------------------------------------------------------------${RESET}"
 }
 
 stop_worker() { 
     clear; echo -e "${GREEN_BOLD}Stopping all 'wai' worker processes...${RESET}"; 
     export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
-    if command -v pm2 &> /dev/null; then pm2 stop all; echo "All processes stopped."; else echo "PM2 not found in PATH."; fi
+    if command -v pm2 &> /dev/null; then pm2 stop all; echo "All processes stopped."; else echo "PM2 not found in PATH. Try running 'source ~/.bashrc' first."; fi
 }
 
 start_worker() {
     clear; echo -e "${GREEN_BOLD}Restarting all 'wai' worker processes...${RESET}";
     export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
-    if command -v pm2 &> /dev/null; then pm2 restart all; echo "All processes restarted."; else echo "PM2 not found in PATH."; fi
+    if command -v pm2 &> /dev/null; then pm2 restart all; echo "All processes restarted."; else echo "PM2 not found in PATH. Try running 'source ~/.bashrc' first."; fi
 }
 
 uninstall_worker() {
-    clear; read -p "Are you sure you want to completely uninstall the worker? (y/n) " -n 1 -r; echo
+    clear; read -p "Are you sure you want to completely uninstall the worker? This action is irreversible. (y/n) " -n 1 -r; echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo -e "${GREEN_BOLD}Starting uninstallation...${RESET}";
-        # --- Также останавливаем периодический перезапуск при удалении ---
+        # Also stop the periodic restarter during uninstallation
         if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
             echo "Stopping periodic restarter..."
             kill "$(cat "$PID_FILE")"
             rm -f "$PID_FILE"
         fi
         rm -f "$LOG_FILE"
-        # ---
+        
         export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
         if command -v pm2 &> /dev/null; then
             pm2 delete all >/dev/null 2>&1 || true; pm2 unstartup >/dev/null 2>&1 || true
