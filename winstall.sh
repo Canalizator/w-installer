@@ -70,7 +70,6 @@ cat <<'EOF'
  @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- descord:dedbezmen
 EOF
         echo -e "${RESET}"; echo "Use ▲/▼ to navigate, Enter to select"; echo "------------------------------------"
         for i in "${!menu_items[@]}"; do
@@ -87,9 +86,12 @@ EOF
             echo -e "Status: $status_text"
         fi
         
+        # --- FIXED: Help text block formatting ---
+        # The color codes are moved into the printf format string itself.
+        # This ensures correct width calculation for alignment and proper color rendering.
         echo -e "${BLUE}Helpful Commands:${RESET}"
-        printf "  %-45s - %s\n" "${YELLOW_BOLD}tail -f ${LOG_FILE}${RESET}" "To track the background restarter"
-        printf "  %-45s - %s\n" "${YELLOW_BOLD}source ~/.bashrc${RESET}" "To enable 'pm2' in your terminal"
+        printf "  ${YELLOW_BOLD}%-38s${RESET} - %s\n" "tail -f ${LOG_FILE}" "To track the background restarter"
+        printf "  ${YELLOW_BOLD}%-38s${RESET} - %s\n" "source ~/.bashrc" "To enable 'pm2' in your terminal"
         echo "------------------------------------"
 
         read -rsn1 key; if [[ $key == $'\e' ]]; then read -rsn2 -t 0.1 key; fi
@@ -231,7 +233,7 @@ show_stats() {
 
 main_install() {
   clear
-  # --- FIXED: The complex 'read' command is broken into two simpler lines for robustness ---
+  # --- The complex 'read' command is broken into two simpler lines for robustness ---
   local prompt_text
   prompt_text=$(echo -e "${GREEN_BOLD}Enter the API key from app.w.ai/keys:${RESET} ")
   read -rp "$prompt_text" W_AI_API_KEY
@@ -355,7 +357,10 @@ uninstall_worker() {
             pm2 kill >/dev/null 2>&1 || true; npm uninstall -g pm2 yarn >/dev/null 2>&1 || true
         fi
         rm -rf "$HOME/.wai"; rm -f /usr/bin/wai; rm -f "$(pwd)/wai.config.js" wai_init.log &>/dev/null || true
-        sed -i '/# NVM Loader/,/This loads nvm/d' ~/.bashrc
+        # Safely remove nvm loader from .bashrc if it exists
+        if grep -q "# NVM Loader" ~/.bashrc; then
+            sed -i '/# NVM Loader/,/This loads nvm/d' ~/.bashrc
+        fi
         echo -e "${GREEN_BOLD}Uninstallation complete.${RESET}";
     else echo "Uninstallation cancelled."; fi
 }
