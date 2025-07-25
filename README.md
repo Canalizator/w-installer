@@ -1,8 +1,11 @@
 
 
-# W\.AI GPU Installer Script
+# W\.AI GPU Completely brainless installation Script
 
 Automates the installation and configuration of W\.AI GPU workers on NVIDIA-powered systems.
+It will install all dependencies, check CUDA, and reinstall if the version is other than 12.4. 
+It will calculate the number of workers based on 1.8GB VRAM per instance, and start them with 30sec delay. 
+Otionally, It will  restart all workers every 30 min.
 
 ---
 
@@ -42,61 +45,5 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Canalizator/w-installer/main
 
 Once started, the main menu will appear.
 
----
-
-## 📚 Menu Options
-
-### 1. **Install Worker**
-
-Performs a full automated system setup:
-
-* 🔑 **API Key Prompt:** You'll be asked for your API key from [app.w.ai/keys](https://app.w.ai/keys)
-* 📦 **Dependencies:** Installs system packages such as `build-essential`, `git`, `curl`, `jq`, `bc`, etc.
-* ⚙️ **CUDA 12.4 Installation:** Checks for existing CUDA installation. If missing, downloads the official installer, performs a silent install, and appends to `.bashrc`
-* 🧠 **W\.AI CLI Setup:** Downloads and installs the official `w.ai` CLI (with fallback if needed)
-* 🟢 **Node.js Environment:**
-
-  * Installs `nvm`, then Node.js v22
-  * Installs `yarn` and `pm2` globally
-* 🚀 **Worker Initialization:**
-
-  * Runs `wai run` with your API key
-  * Waits for the log message `Starting w.ai worker...` (up to 30 minutes)
-  * Automatically terminates the init process after successful detection
-
-**Instance Calculation & Configuration:**
-
-* Uses `nvidia-smi` to detect each GPU and its VRAM
-* Calculates the number of instances (1 per 1.8 GB of VRAM)
-* Generates `wai.config.js` for use with `pm2`
-
-**Safe Sequential Launch:**
-
-* Starts instances one by one with a 15-second delay
-* Configures `pm2` to auto-start all workers after reboot
-
----
-
-### 2. **Stats**
-
-Launches a live dashboard to monitor running workers.
-
----
-
-### 3. **Stop Worker**
-
-Stops all processes with names starting with `wai-gpu-` via `pm2`.
-
----
-
-### 4. **Uninstall Worker**
-
-Fully removes everything installed by the script.
-
----
-
-### 5. **Exit**
-
-Exits the script cleanly.
 
 
