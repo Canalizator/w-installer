@@ -2,10 +2,13 @@
 
 # W\.AI GPU Completely brainless installation Script
 
-Automates the installation and configuration of W\.AI GPU workers on NVIDIA-powered systems.
-It will install all dependencies, check CUDA, and reinstall if the version is other than 12.4. 
-It will find out the number of available cards, determine free VRAM and start instances at the rate of 1.8GB per instance
-Otionally, It will  restart all workers every 30 min.
+Automates the installation and configuration of W.AI GPU workers on NVIDIA-powered systems.
+
+- Installs all required dependencies.
+- Checks for the installed CUDA version and reinstalls it if it's not **12.4**.
+- Detects the number of available GPUs.
+- Calculates available VRAM and starts worker instances at a rate of **1.8 GB per instance**.
+- Optionally, restarts all workers every **30 minutes**.
 
 ---
 
