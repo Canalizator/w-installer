@@ -69,8 +69,8 @@ cat <<'EOF'
  @@@@@@@@@   @@@@  @       @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
- @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
- discord:dedbezmen 
+ @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ 
+ descord:dedbezmen
 EOF
         echo -e "${RESET}"; echo "Use ▲/▼ to navigate, Enter to select"; echo "------------------------------------"
         for i in "${!menu_items[@]}"; do
@@ -87,7 +87,6 @@ EOF
             echo -e "Status: $status_text"
         fi
         
-        # --- NEW: Added help text block at the bottom of the menu ---
         echo -e "${BLUE}Helpful Commands:${RESET}"
         printf "  %-45s - %s\n" "${YELLOW_BOLD}tail -f ${LOG_FILE}${RESET}" "To track the background restarter"
         printf "  %-45s - %s\n" "${YELLOW_BOLD}source ~/.bashrc${RESET}" "To enable 'pm2' in your terminal"
@@ -111,9 +110,7 @@ periodic_restart() {
     while true; do
         echo "---"
         echo "Periodic Restart: Starting a cycle at $(date)"
-        
-        # Load NVM environment, as this is a separate process. NVM_DIR is passed from the parent process.
-        # This guarantees that we can find nvm, node, and pm2.
+
         if [ -s "$NVM_DIR/nvm.sh" ]; then
              # shellcheck source=/dev/null
              \. "$NVM_DIR/nvm.sh" &>/dev/null
@@ -129,7 +126,6 @@ periodic_restart() {
             continue
         fi
 
-        # Get the list of instances
         local pm2_data
         pm2_data=$(pm2 jlist 2>/dev/null || echo "[]")
         local app_names=()
@@ -156,12 +152,10 @@ periodic_restart() {
 # --- Menu option to manage the periodic restart ---
 manage_periodic_restart() {
     clear
-    # Check if a PID file exists and the process is active
     if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
         local pid
         pid=$(cat "$PID_FILE")
         echo -e "${YELLOW_BOLD}Periodic restart is currently ACTIVE (PID: $pid).${RESET}"
-        echo "Processes are restarted every 30 minutes with a 30s delay between them."
         echo "Logs can be viewed with the command: tail -f $LOG_FILE"
         echo ""
         read -p "Do you want to STOP the periodic restart? (y/n) " -n 1 -r; echo
@@ -174,31 +168,24 @@ manage_periodic_restart() {
             echo "No action taken."
         fi
     else
-        # If the process is not running (or the PID file is stale)
         rm -f "$PID_FILE" # Clean up old file just in case
         echo -e "${YELLOW_BOLD}Periodic restart is currently INACTIVE.${RESET}"
         read -p "Do you want to START it? (y/n) " -n 1 -r; echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             echo "Starting the periodic restart process in the background..."
             
-            # Load NVM environment in the current shell to get the correct PATH
             export NVM_DIR="$HOME/.nvm"
             # shellcheck source=/dev/null
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Check for commands before launching
             if ! command -v jq &> /dev/null || ! command -v pm2 &> /dev/null; then
                 echo "Error: 'jq' or 'pm2' is not in the PATH. Cannot start periodic restarter."
                 echo "Try running 'source ~/.bashrc' and then run this script again."
                 return 1
             fi
             
-            # Create the log file immediately so `tail -f` works without error.
             touch "$LOG_FILE"
             
-            # Launch the function in the background via 'nohup', explicitly passing the PATH and NVM_DIR environment variables.
-            # 'declare -f' passes the function definition to the new shell.
-            # The output is correctly redirected to the log file.
             nohup env PATH="$PATH" NVM_DIR="$NVM_DIR" bash -c "$(declare -f periodic_restart); periodic_restart" >> "$LOG_FILE" 2>&1 &
             echo $! > "$PID_FILE"
             
@@ -244,7 +231,11 @@ show_stats() {
 
 main_install() {
   clear
-  read -rp "$(echo -e "${GREEN_BOLD}Enter the API key from app.w.ai/keys:${RESET} ")" W_AI_API_KEY
+  # --- FIXED: The complex 'read' command is broken into two simpler lines for robustness ---
+  local prompt_text
+  prompt_text=$(echo -e "${GREEN_BOLD}Enter the API key from app.w.ai/keys:${RESET} ")
+  read -rp "$prompt_text" W_AI_API_KEY
+  
   if [ -z "$W_AI_API_KEY" ]; then echo "Error: API key cannot be empty."; return; fi
   local api_key="$W_AI_API_KEY"; declare -a APP_NAMES_TO_START
 
@@ -267,4 +258,107 @@ main_install() {
   if ! command -v node &> /dev/null; then
     echo "Node.js not found. Installing via NVM..."; curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash;
   fi;
-  export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR
+  export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; nvm install 22 &>/dev/null; nvm use 22 &>/dev/null; nvm alias default 22 &>/dev/null;
+  echo -e "${GREEN_BOLD}Installing PM2 and Yarn globally...${RESET}"; npm install -g pm2 yarn
+  
+  if ! grep -q "This loads nvm" ~/.bashrc; then
+      echo "Adding NVM to ~/.bashrc for persistent access..."; echo -e '\n# NVM Loader\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm' >> ~/.bashrc
+  fi
+
+  local attempt_num=1; while true; do
+    echo "Attempting to initialize 'wai' (Attempt #${attempt_num})..."; echo "Displaying logs below. Waiting for the 'Starting w.ai worker...' message (30-minute timeout)..."
+    W_AI_API_KEY=$api_key wai run 2>&1 | tee wai_init.log & WAI_PID=$!
+    if timeout 30m grep -q "Starting w.ai worker..." <(tail -f wai_init.log); then 
+        echo -e "${GREEN_BOLD}Worker initialized successfully.${RESET}"; kill $WAI_PID; sleep 2; rm wai_init.log; break; 
+    else
+        echo "Timed out waiting for worker. Retrying..."; kill $WAI_PID &> /dev/null || true; rm -f wai_init.log; attempt_num=$((attempt_num + 1)); sleep 3;
+    fi
+  done
+  
+  create_pm2_config() {
+    if ! command -v nvidia-smi &> /dev/null; then echo "nvidia-smi not found."; exit 1; fi
+    mapfile -t vrams_mb < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits);
+    if [ ${#vrams_mb[@]} -eq 0 ]; then echo "No NVIDIA GPUs found."; exit 1; fi
+    
+    local instance_counts=() total_apps=0
+    echo "Calculating instance counts for ${#vrams_mb[@]} GPUs..."
+    for vram in "${vrams_mb[@]}"; do
+        local instances; instances=$(bc <<< "scale=2; vram=${vram}; vram/1024/1.8" | cut -d. -f1)
+        if [ "$instances" -lt 1 ]; then instances=1; fi
+        instance_counts+=($instances)
+        total_apps=$((total_apps + instances))
+    done
+
+    echo "Found $total_apps total instances to create. Generating wai.config.js..."
+    cat > wai.config.js <<EOF
+module.exports = { apps: [
+EOF
+    local app_count=0; for i in "${!instance_counts[@]}"; do
+      for ((j=0; j<${instance_counts[$i]}; j++)); do
+        local app_name="wai-gpu-${i}-${j}"; APP_NAMES_TO_START+=("$app_name"); app_count=$((app_count + 1))
+        local comma=""; if [ "$app_count" -lt "$total_apps" ]; then comma=","; fi
+        cat >> wai.config.js <<EOF
+    { "name": "$app_name", "script": "wai", "args": "run -g $i", "instances": 1, "autorestart": true, "watch": false, "max_memory_restart": "1G", "env": { "NODE_ENV": "production", "W_AI_API_KEY": "$1" } }$comma
+EOF
+      done
+    done; cat >> wai.config.js <<EOF
+]};
+EOF
+    echo -e "${GREEN_BOLD}wai.config.js created.${RESET}"; 
+  }
+  create_pm2_config "$api_key";
+  
+  echo -e "${GREEN_BOLD}Starting PM2 processes sequentially...${RESET}"; for app_name in "${APP_NAMES_TO_START[@]}"; do
+    echo "Starting instance: ${app_name}..."; pm2 start wai.config.js --only "${app_name}"; echo "Waiting 30 seconds..."; sleep 30; 
+  done
+  
+  echo -e "${GREEN_BOLD}Configuring PM2 to start on system boot...${RESET}";
+  pm2 startup | tail -n 1 | sudo bash; pm2 save
+  
+  echo -e "\n${GREEN_BOLD}Installation is complete!${RESET}"
+  echo -e "${YELLOW_BOLD}---------------------------------------------------------------"
+  echo -e "IMPORTANT: To use 'pm2' and other commands in your terminal,"
+  echo -e "you must now either:"
+  echo -e "1. Run the command: ${GREEN_BOLD}source ~/.bashrc${YELLOW_BOLD}"
+  echo -e "OR"
+  echo -e "2. Log out and log back in to your session."
+  echo -e "This is a one-time action for your current terminal session."
+  echo -e "---------------------------------------------------------------${RESET}"
+}
+
+stop_worker() { 
+    clear; echo -e "${GREEN_BOLD}Stopping all 'wai' worker processes...${RESET}"; 
+    export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+    if command -v pm2 &> /dev/null; then pm2 stop all; echo "All processes stopped."; else echo "PM2 not found in PATH. Try running 'source ~/.bashrc' first."; fi
+}
+
+start_worker() {
+    clear; echo -e "${GREEN_BOLD}Restarting all 'wai' worker processes...${RESET}";
+    export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+    if command -v pm2 &> /dev/null; then pm2 restart all; echo "All processes restarted."; else echo "PM2 not found in PATH. Try running 'source ~/.bashrc' first."; fi
+}
+
+uninstall_worker() {
+    clear; read -p "Are you sure you want to completely uninstall the worker? This action is irreversible. (y/n) " -n 1 -r; echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN_BOLD}Starting uninstallation...${RESET}";
+        if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+            echo "Stopping periodic restarter..."
+            kill "$(cat "$PID_FILE")"
+            rm -f "$PID_FILE"
+        fi
+        rm -f "$LOG_FILE"
+        
+        export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" &>/dev/null
+        if command -v pm2 &> /dev/null; then
+            pm2 delete all >/dev/null 2>&1 || true; pm2 unstartup >/dev/null 2>&1 || true
+            pm2 kill >/dev/null 2>&1 || true; npm uninstall -g pm2 yarn >/dev/null 2>&1 || true
+        fi
+        rm -rf "$HOME/.wai"; rm -f /usr/bin/wai; rm -f "$(pwd)/wai.config.js" wai_init.log &>/dev/null || true
+        sed -i '/# NVM Loader/,/This loads nvm/d' ~/.bashrc
+        echo -e "${GREEN_BOLD}Uninstallation complete.${RESET}";
+    else echo "Uninstallation cancelled."; fi
+}
+
+# --- Script Entry Point ---
+show_menu
