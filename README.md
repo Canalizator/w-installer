@@ -4,7 +4,7 @@
 
 Automates the installation and configuration of W\.AI GPU workers on NVIDIA-powered systems.
 It will install all dependencies, check CUDA, and reinstall if the version is other than 12.4. 
-It will calculate the number of workers based on 1.8GB VRAM per instance, and start them with 30sec delay. 
+It will find out the number of available cards, determine free VRAM and start instances at the rate of 1.8GB per instance
 Otionally, It will  restart all workers every 30 min.
 
 ---
